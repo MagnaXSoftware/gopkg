@@ -1,6 +1,8 @@
-# gopkg
+# gopkg for Caddy v2
 
-A Caddy plugin to add gopkg-like functionality to your own web sites.
+This is a port of the gopkg plugin to Caddy v2.
+
+The plugin allows to easily setup vanity gopkg/go module names through a Caddy-powered website.
 
 # Usage
 

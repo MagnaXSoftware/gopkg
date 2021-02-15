@@ -1,123 +1,139 @@
-// Usage:
-//
-//     gopkg [path] [vcs-type] [uri]
-//     gopkg [path] [uri]
-
 package gopkg
 
 import (
+	"fmt"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"html/template"
 	"net/http"
 
-	"github.com/mholt/caddy"
-	"github.com/mholt/caddy/caddyhttp/httpserver"
+	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 )
 
-func init() {
-	caddy.RegisterPlugin("gopkg", caddy.Plugin{
-		ServerType: "http",
-		Action:     setup,
-	})
-}
-
-type Config struct {
-	Path string
-	Vcs  string
-	Uri  string
-}
-
-type GopkgHandler struct {
-	Next    httpserver.Handler
-	Configs []Config
-}
-
-var tmpl = template.Must(template.New("").Parse(`<html>
+//DefaultTemplate is the default HTML template used as a response.
+const DefaultTemplate = `<html>
 <head>
-<meta name="go-import" content="{{.Host}}{{.Path}} {{.Vcs}} {{.Uri}}">
+<meta name="go-import" content="{{.Host}}{{.Path}} {{.Vcs}} {{.URI}}">
 </head>
 <body>
 go get {{.Host}}{{.Path}}
 </body>
 </html>
-`))
+`
 
-func (g GopkgHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) {
-	for i := range g.Configs {
-
-		// Check if the request path should be handled by Gopkg middleware
-		if !httpserver.Path(r.URL.Path).Matches(g.Configs[i].Path) {
-			continue
-		}
-
-		cfg := &g.Configs[i]
-
-		// Check if the request path contains go-get=1
-		if r.FormValue("go-get") != "1" {
-			http.Redirect(w, r, cfg.Uri, http.StatusTemporaryRedirect)
-			return 0, nil
-		}
-
-		host := r.Host
-
-		err := tmpl.Execute(w, struct {
-			Host string
-			Path string
-			Vcs  string
-			Uri  string
-		}{
-			Host: host,
-			Path: cfg.Path,
-			Vcs:  cfg.Vcs,
-			Uri:  cfg.Uri,
-		})
-		if err != nil {
-			return http.StatusInternalServerError, err
-		}
-		return http.StatusOK, nil
-	}
-
-	return g.Next.ServeHTTP(w, r)
+func init() {
+	caddy.RegisterModule(Module{})
+	httpcaddyfile.RegisterDirective("gopkg", parseCaddyFile)
 }
 
-func setup(c *caddy.Controller) error {
-	configs, err := parse(c)
-	if err != nil {
-		return err
+//Module represents the GoPkg Caddy module.
+type Module struct {
+	Path string `json:"path"`
+	Vcs  string `json:"vcs,omitempty"`
+	URI  string `json:"uri"`
+
+	// Template is the template used when returning a response (instead of redirecting).
+	Template *template.Template
+}
+
+func (m Module) CaddyModule() caddy.ModuleInfo {
+	return caddy.ModuleInfo{
+		ID: "http.handlers.gopkg",
+		New: func() caddy.Module {
+			return new(Module)
+		},
 	}
-	httpserver.GetConfig(c).AddMiddleware(func(next httpserver.Handler) httpserver.Handler {
-		return GopkgHandler{
-			Configs: configs,
-			Next:    next,
+}
+
+// parseCaddyFile parses the gopkg directive in a caddyfile.
+//
+// It also automatically sets up a path matcher so that each instance is separate.
+func parseCaddyFile(h httpcaddyfile.Helper) ([]httpcaddyfile.ConfigValue, error) {
+	if !h.Next() {
+		return nil, h.ArgErr()
+	}
+
+	var m = new(Module)
+	err := m.UnmarshalCaddyfile(h.Dispenser)
+	if err != nil {
+		return nil, err
+	}
+
+	matcher := caddy.ModuleMap{
+		"path": h.JSON(m.Path),
+	}
+
+	return h.NewRoute(matcher, m), nil
+
+}
+
+// UnmarshalCaddyfile implements caddyfile.Unmarshaler. Syntax:
+//
+//     gopkg <path> [<vcs>] <uri>
+//
+func (m *Module) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	for d.Next() {
+		if !d.Args(&m.Path) {
+			return d.ArgErr()
 		}
-	})
+		args := d.RemainingArgs()
+		switch len(args) {
+		case 2:
+			d.Args(&m.Vcs)
+			fallthrough
+		case 1:
+			// no vcs
+			d.Args(&m.URI)
+		default:
+			return d.ArgErr()
+		}
+	}
+
 	return nil
 }
 
-func parse(c *caddy.Controller) ([]Config, error) {
-	var configs []Config
-
-	for c.Next() {
-
-		args := c.RemainingArgs()
-
-		if len(args) != 2 && len(args) != 3 {
-			return configs, c.ArgErr()
-		}
-
-		cfg := Config{
-			Vcs:  "git",
-			Path: args[0],
-		}
-
-		if len(args) == 2 {
-			cfg.Uri = args[1]
-		} else {
-			cfg.Vcs = args[1]
-			cfg.Uri = args[2]
-		}
-
-		configs = append(configs, cfg)
+func (m *Module) Provision(ctx caddy.Context) error {
+	if m.Vcs == "" {
+		m.Vcs = "git"
 	}
 
-	return configs, nil
+	if m.Template == nil {
+		tpl, err := template.New("Package").Parse(DefaultTemplate)
+		if err != nil {
+			return fmt.Errorf("parsing default gopkg template: %v", err)
+		}
+		m.Template = tpl
+	}
+
+	return nil
 }
+
+func (m Module) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	// If go-get is not present, it's most likely a browser request. So let's redirect.
+	if r.FormValue("go-get") != "1" {
+		http.Redirect(w, r, m.URI, http.StatusTemporaryRedirect)
+		return nil
+	}
+
+	err := m.Template.Execute(w, struct {
+		Host string
+		Path string
+		Vcs  string
+		URI  string
+	}{r.Host, m.Path, m.Vcs, m.URI})
+
+	if err != nil {
+		return caddyhttp.Error(http.StatusInternalServerError, err)
+	}
+
+	w.Header().Set("Content-Type", "text/html")
+	return nil
+}
+
+// Interface guards
+var (
+	_ caddy.Provisioner           = (*Module)(nil)
+	_ caddyhttp.MiddlewareHandler = (*Module)(nil)
+	_ caddyfile.Unmarshaler       = (*Module)(nil)
+)

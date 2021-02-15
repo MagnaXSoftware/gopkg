@@ -48,11 +48,15 @@ func (m Module) CaddyModule() caddy.ModuleInfo {
 
 // parseCaddyFile parses the gopkg directive in a caddyfile.
 //
-// It also automatically sets up a path matcher so that each instance is separate.
+// The module is automatically mounted at the path of the go package. This alleviates the middleware chain for
+// non-gopkg requests.
 func parseCaddyFile(h httpcaddyfile.Helper) ([]httpcaddyfile.ConfigValue, error) {
 	if !h.Next() {
 		return nil, h.ArgErr()
 	}
+
+	// Pretend the lookahead never happened
+	h.Reset()
 
 	var m = new(Module)
 	err := m.UnmarshalCaddyfile(h.Dispenser)
@@ -61,7 +65,7 @@ func parseCaddyFile(h httpcaddyfile.Helper) ([]httpcaddyfile.ConfigValue, error)
 	}
 
 	matcher := caddy.ModuleMap{
-		"path": h.JSON(m.Path),
+		"path": h.JSON(caddyhttp.MatchPath{m.Path}),
 	}
 
 	return h.NewRoute(matcher, m), nil
@@ -77,14 +81,15 @@ func (m *Module) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 		if !d.Args(&m.Path) {
 			return d.ArgErr()
 		}
+
 		args := d.RemainingArgs()
 		switch len(args) {
 		case 2:
-			d.Args(&m.Vcs)
+			m.Vcs = args[0]
+			args = args[1:]
 			fallthrough
 		case 1:
-			// no vcs
-			d.Args(&m.URI)
+			m.URI = args[0]
 		default:
 			return d.ArgErr()
 		}

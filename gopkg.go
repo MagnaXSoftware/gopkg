@@ -65,7 +65,7 @@ func parseCaddyFile(h httpcaddyfile.Helper) ([]httpcaddyfile.ConfigValue, error)
 	}
 
 	matcher := caddy.ModuleMap{
-		"path": h.JSON(caddyhttp.MatchPath{m.Path}),
+		"path": h.JSON(caddyhttp.MatchPath{m.Path, m.Path + "/", m.Path + "/*"}),
 	}
 
 	return h.NewRoute(matcher, m), nil

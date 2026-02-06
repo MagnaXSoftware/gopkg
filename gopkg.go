@@ -7,7 +7,7 @@
 //
 // Within a Caddyfile, new go packages are added using the gopkg directive:
 //
-//     gopkg <path> [<vcs>] <uri>
+//	gopkg <path> [<vcs>] <uri>
 //
 // The <path> argument corresponds to the path component of the vanity import path, e.g. for "magnax.ca/caddy/gopkg",
 // the path would be "/caddy/gopkg".
@@ -19,12 +19,13 @@ package gopkg
 
 import (
 	"fmt"
+	"html/template"
+	"net/http"
+
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
-	"html/template"
-	"net/http"
 )
 
 // DefaultTemplate is the default HTML template used as a response.
@@ -39,7 +40,7 @@ go get {{.Host}}{{.Path}}
 `
 
 func init() {
-	caddy.RegisterModule(GoPackage{})
+	caddy.RegisterModule(&GoPackage{})
 	httpcaddyfile.RegisterDirective("gopkg", parseCaddyFile)
 }
 
@@ -70,7 +71,7 @@ type GoPackage struct {
 	Template *template.Template
 }
 
-func (m GoPackage) CaddyModule() caddy.ModuleInfo {
+func (m *GoPackage) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID: "http.handlers.gopkg",
 		New: func() caddy.Module {
@@ -107,8 +108,7 @@ func parseCaddyFile(h httpcaddyfile.Helper) ([]httpcaddyfile.ConfigValue, error)
 
 // UnmarshalCaddyfile implements caddyfile.Unmarshaler. Syntax:
 //
-//     gopkg <path> [<vcs>] <uri>
-//
+//	gopkg <path> [<vcs>] <uri>
 func (m *GoPackage) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	for d.Next() {
 		if !d.Args(&m.Path) {
@@ -147,7 +147,7 @@ func (m *GoPackage) Provision(ctx caddy.Context) error {
 	return nil
 }
 
-func (m GoPackage) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+func (m *GoPackage) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	// If go-get is not present, it's most likely a browser request. So let's redirect.
 	if r.FormValue("go-get") != "1" {
 		http.Redirect(w, r, m.URL, http.StatusTemporaryRedirect)

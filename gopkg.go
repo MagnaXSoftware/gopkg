@@ -42,6 +42,7 @@ go get {{.Host}}{{.Path}}
 func init() {
 	caddy.RegisterModule(&GoPackage{})
 	httpcaddyfile.RegisterDirective("gopkg", parseCaddyFile)
+	httpcaddyfile.RegisterDirectiveOrder("gopkg", httpcaddyfile.Before, "redir")
 }
 
 // GoPackage implements vanity go package import paths.
